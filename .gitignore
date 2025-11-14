@@ -9,6 +9,7 @@ out/
 
 # Docs
 docs/
+!docs-site/docs/
 
 # Dotenv file
 .env

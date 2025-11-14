@@ -69,34 +69,53 @@ contract MODLAggregator is BaseHook, Ownable {
     struct ModuleConfigInput {
         IMODLModule module;
         ModuleHooks hooks;
-        bool failOnRevert;
+        bool critical;
         uint32 priority;
+        uint32 gasLimit;
     }
 
     struct ModuleConfig {
         IMODLModule module;
         uint16 hooksBitmap;
-        bool failOnRevert;
+        bool critical;
         uint32 priority;
+        uint32 gasLimit;
     }
 
     struct ModuleConfigView {
         IMODLModule module;
         ModuleHooks hooks;
-        bool failOnRevert;
+        bool critical;
         uint32 priority;
+        uint32 gasLimit;
+    }
+
+    enum ExecMode {
+        FIRST,
+        ALL
+    }
+
+    struct Route {
+        uint16[] moduleIndices;
+        ExecMode mode;
     }
 
     error ModuleExecutionFailed(address module, Hook hook, bytes reason);
     error InvalidModule(address module);
     error DuplicateModule(address module);
     error TooManyModules(uint256 attempted);
+    error RouteNotFound(bytes4 selector);
+    error EmptyRoute();
+    error InvalidRouteIndex(uint16 index);
 
-    event ModuleConfigured(address indexed module, uint32 priority, uint16 hooksBitmap, bool failOnRevert);
+    event ModuleConfigured(address indexed module, uint32 priority, uint16 hooksBitmap, bool critical, uint32 gasLimit);
     event ModuleExecutionSkipped(address indexed module, Hook hook, bytes reason);
+    event RouteSet(bytes4 indexed selector, uint16[] moduleIndices, ExecMode mode);
+    event RouteCleared(bytes4 indexed selector);
 
     ModuleConfig[] private _modules;
     mapping(address module => bool) public isModuleRegistered;
+    mapping(bytes4 selector => Route) public routes;
 
     constructor(IPoolManager poolManager, ModuleConfigInput[] memory initialModules)
         BaseHook(poolManager)
@@ -152,8 +171,9 @@ contract MODLAggregator is BaseHook, Ownable {
             views[i] = ModuleConfigView({
                 module: stored.module,
                 hooks: _decodeHooks(stored.hooksBitmap),
-                failOnRevert: stored.failOnRevert,
-                priority: stored.priority
+                critical: stored.critical,
+                priority: stored.priority,
+                gasLimit: stored.gasLimit
             });
         }
     }
@@ -175,12 +195,13 @@ contract MODLAggregator is BaseHook, Ownable {
                 ModuleConfig({
                     module: input.module,
                     hooksBitmap: hooksBitmap,
-                    failOnRevert: input.failOnRevert,
-                    priority: input.priority
+                    critical: input.critical,
+                    priority: input.priority,
+                    gasLimit: input.gasLimit
                 })
             );
             isModuleRegistered[address(input.module)] = true;
-            emit ModuleConfigured(address(input.module), input.priority, hooksBitmap, input.failOnRevert);
+            emit ModuleConfigured(address(input.module), input.priority, hooksBitmap, input.critical, input.gasLimit);
         }
 
         _sortModulesByPriority();
@@ -303,18 +324,134 @@ contract MODLAggregator is BaseHook, Ownable {
     }
 
     // ----------------------------------------
+    // External routing
+    // ----------------------------------------
+
+    function setRoute(bytes4 selector, uint16[] calldata moduleIndices, ExecMode mode) external onlyOwner {
+        uint256 length = moduleIndices.length;
+        if (length == 0) revert EmptyRoute();
+
+        Route storage route = routes[selector];
+        delete route.moduleIndices;
+        route.mode = mode;
+
+        uint16[] memory emitted = new uint16[](length);
+        for (uint256 i; i < length; ++i) {
+            uint16 moduleIndex = moduleIndices[i];
+            _validateRouteIndex(moduleIndex);
+            route.moduleIndices.push(moduleIndex);
+            emitted[i] = moduleIndex;
+        }
+
+        emit RouteSet(selector, emitted, mode);
+    }
+
+    function clearRoute(bytes4 selector) external onlyOwner {
+        Route storage route = routes[selector];
+        if (route.moduleIndices.length == 0) revert RouteNotFound(selector);
+        delete routes[selector];
+        emit RouteCleared(selector);
+    }
+
+    fallback() external payable {
+        _forwardRoute(msg.sig, msg.data);
+    }
+
+    receive() external payable {}
+
+    function _forwardRoute(bytes4 selector, bytes calldata payload) private {
+        Route storage route = routes[selector];
+        uint256 length = route.moduleIndices.length;
+        if (length == 0) revert RouteNotFound(selector);
+
+        if (route.mode == ExecMode.FIRST) {
+            _routeToSingle(route.moduleIndices[0], payload);
+        } else {
+            _routeToAll(route.moduleIndices, payload);
+        }
+    }
+
+    function _routeToSingle(uint16 moduleIndex, bytes calldata payload) private {
+        _validateRouteIndex(moduleIndex);
+        ModuleConfig storage config = _modules[moduleIndex];
+        bytes memory data = payload;
+        (bool success, bytes memory returndata) = _callModuleRaw(config, data);
+        if (!success) _revertWithData(returndata);
+        if (returndata.length > 0) {
+            _returnWithData(returndata);
+        }
+    }
+
+    function _routeToAll(uint16[] storage moduleIndices, bytes calldata payload) private {
+        bytes memory lastReturndata;
+        uint256 length = moduleIndices.length;
+        for (uint256 i; i < length; ++i) {
+            uint16 moduleIndex = moduleIndices[i];
+            _validateRouteIndex(moduleIndex);
+            ModuleConfig storage config = _modules[moduleIndex];
+            bytes memory data = payload;
+            (bool success, bytes memory returndata) = _callModuleRaw(config, data);
+            if (!success) _revertWithData(returndata);
+            lastReturndata = returndata;
+        }
+
+        if (lastReturndata.length > 0) {
+            _returnWithData(lastReturndata);
+        }
+    }
+
+    function _validateRouteIndex(uint16 moduleIndex) private view {
+        if (moduleIndex >= _modules.length) revert InvalidRouteIndex(moduleIndex);
+    }
+
+    function _revertWithData(bytes memory returndata) private pure {
+        if (returndata.length == 0) revert();
+        assembly {
+            revert(add(returndata, 32), mload(returndata))
+        }
+    }
+
+    function _returnWithData(bytes memory returndata) private pure {
+        assembly {
+            return(add(returndata, 32), mload(returndata))
+        }
+    }
+
+    // ----------------------------------------
     // Internal execution helpers
     // ----------------------------------------
+
+    function _callModuleHook(ModuleConfig storage config, Hook hook, bytes memory payload)
+        private
+        returns (bool success, bytes memory returndata)
+    {
+        (success, returndata) = _callModuleRaw(config, payload);
+        if (!success) {
+            _handleModuleError(config, hook, returndata);
+        }
+    }
+
+    function _callModuleRaw(ModuleConfig storage config, bytes memory payload)
+        private
+        returns (bool success, bytes memory returndata)
+    {
+        address target = address(config.module);
+        uint256 gasLimit = config.gasLimit;
+        if (gasLimit == 0) {
+            (success, returndata) = target.call(payload);
+        } else {
+            (success, returndata) = target.call{gas: gasLimit}(payload);
+        }
+    }
 
     function _executeBeforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96) private {
         uint256 length = _modules.length;
         for (uint256 i; i < length; ++i) {
             ModuleConfig storage config = _modules[i];
             if (!_hasHook(config.hooksBitmap, _HOOK_BEFORE_INITIALIZE)) continue;
-            try config.module.beforeInitialize(poolManager, sender, key, sqrtPriceX96) {}
-            catch (bytes memory reason) {
-                _handleModuleError(config, Hook.BeforeInitialize, reason);
-            }
+            bytes memory payload =
+                abi.encodeWithSelector(IMODLModule.beforeInitialize.selector, poolManager, sender, key, sqrtPriceX96);
+            _callModuleHook(config, Hook.BeforeInitialize, payload);
         }
     }
 
@@ -323,10 +460,10 @@ contract MODLAggregator is BaseHook, Ownable {
         for (uint256 i; i < length; ++i) {
             ModuleConfig storage config = _modules[i];
             if (!_hasHook(config.hooksBitmap, _HOOK_AFTER_INITIALIZE)) continue;
-            try config.module.afterInitialize(poolManager, sender, key, sqrtPriceX96, tick) {}
-            catch (bytes memory reason) {
-                _handleModuleError(config, Hook.AfterInitialize, reason);
-            }
+            bytes memory payload = abi.encodeWithSelector(
+                IMODLModule.afterInitialize.selector, poolManager, sender, key, sqrtPriceX96, tick
+            );
+            _callModuleHook(config, Hook.AfterInitialize, payload);
         }
     }
 
@@ -344,17 +481,17 @@ contract MODLAggregator is BaseHook, Ownable {
             ModuleConfig storage config = _modules[i];
             if (!_hasHook(config.hooksBitmap, flag)) continue;
             bytes memory data = _moduleCalldata(config.module, moduleData);
+            bytes memory payload;
             if (isAdd) {
-                try config.module.beforeAddLiquidity(poolManager, sender, key, params, data) {}
-                catch (bytes memory reason) {
-                    _handleModuleError(config, hook, reason);
-                }
+                payload = abi.encodeWithSelector(
+                    IMODLModule.beforeAddLiquidity.selector, poolManager, sender, key, params, data
+                );
             } else {
-                try config.module.beforeRemoveLiquidity(poolManager, sender, key, params, data) {}
-                catch (bytes memory reason) {
-                    _handleModuleError(config, hook, reason);
-                }
+                payload = abi.encodeWithSelector(
+                    IMODLModule.beforeRemoveLiquidity.selector, poolManager, sender, key, params, data
+                );
             }
+            _callModuleHook(config, hook, payload);
         }
     }
 
@@ -373,15 +510,14 @@ contract MODLAggregator is BaseHook, Ownable {
             ModuleConfig storage config = _modules[i];
             if (!_hasHook(config.hooksBitmap, _HOOK_AFTER_ADD)) continue;
             bytes memory data = _moduleCalldata(config.module, moduleData);
-
-            try config.module.afterAddLiquidity(poolManager, sender, key, params, delta, feesAccrued, data) returns (
-                IMODLModule.BalanceDeltaResult memory result
-            ) {
-                if (result.hasDelta) {
-                    netDelta = netDelta + result.delta;
-                }
-            } catch (bytes memory reason) {
-                _handleModuleError(config, Hook.AfterAddLiquidity, reason);
+            bytes memory payload = abi.encodeWithSelector(
+                IMODLModule.afterAddLiquidity.selector, poolManager, sender, key, params, delta, feesAccrued, data
+            );
+            (bool success, bytes memory returndata) = _callModuleHook(config, Hook.AfterAddLiquidity, payload);
+            if (!success || returndata.length == 0) continue;
+            IMODLModule.BalanceDeltaResult memory result = abi.decode(returndata, (IMODLModule.BalanceDeltaResult));
+            if (result.hasDelta) {
+                netDelta = netDelta + result.delta;
             }
         }
     }
@@ -401,15 +537,14 @@ contract MODLAggregator is BaseHook, Ownable {
             ModuleConfig storage config = _modules[i];
             if (!_hasHook(config.hooksBitmap, _HOOK_AFTER_REMOVE)) continue;
             bytes memory data = _moduleCalldata(config.module, moduleData);
-
-            try config.module.afterRemoveLiquidity(poolManager, sender, key, params, delta, feesAccrued, data) returns (
-                IMODLModule.BalanceDeltaResult memory result
-            ) {
-                if (result.hasDelta) {
-                    netDelta = netDelta + result.delta;
-                }
-            } catch (bytes memory reason) {
-                _handleModuleError(config, Hook.AfterRemoveLiquidity, reason);
+            bytes memory payload = abi.encodeWithSelector(
+                IMODLModule.afterRemoveLiquidity.selector, poolManager, sender, key, params, delta, feesAccrued, data
+            );
+            (bool success, bytes memory returndata) = _callModuleHook(config, Hook.AfterRemoveLiquidity, payload);
+            if (!success || returndata.length == 0) continue;
+            IMODLModule.BalanceDeltaResult memory result = abi.decode(returndata, (IMODLModule.BalanceDeltaResult));
+            if (result.hasDelta) {
+                netDelta = netDelta + result.delta;
             }
         }
     }
@@ -428,17 +563,16 @@ contract MODLAggregator is BaseHook, Ownable {
             ModuleConfig storage config = _modules[i];
             if (!_hasHook(config.hooksBitmap, _HOOK_BEFORE_SWAP)) continue;
             bytes memory data = _moduleCalldata(config.module, moduleData);
-            try config.module.beforeSwap(poolManager, sender, key, params, data) returns (
-                IMODLModule.BeforeSwapResult memory result
-            ) {
-                if (result.hasDelta) {
-                    delta = _addBeforeSwapDelta(delta, result.delta);
-                }
-                if (result.hasNewFee) {
-                    lpFeeOverride = result.newFee;
-                }
-            } catch (bytes memory reason) {
-                _handleModuleError(config, Hook.BeforeSwap, reason);
+            bytes memory payload =
+                abi.encodeWithSelector(IMODLModule.beforeSwap.selector, poolManager, sender, key, params, data);
+            (bool success, bytes memory returndata) = _callModuleHook(config, Hook.BeforeSwap, payload);
+            if (!success || returndata.length == 0) continue;
+            IMODLModule.BeforeSwapResult memory result = abi.decode(returndata, (IMODLModule.BeforeSwapResult));
+            if (result.hasDelta) {
+                delta = _addBeforeSwapDelta(delta, result.delta);
+            }
+            if (result.hasNewFee) {
+                lpFeeOverride = result.newFee;
             }
         }
     }
@@ -457,14 +591,13 @@ contract MODLAggregator is BaseHook, Ownable {
             ModuleConfig storage config = _modules[i];
             if (!_hasHook(config.hooksBitmap, _HOOK_AFTER_SWAP)) continue;
             bytes memory data = _moduleCalldata(config.module, moduleData);
-            try config.module.afterSwap(poolManager, sender, key, params, delta, data) returns (
-                IMODLModule.AfterSwapResult memory result
-            ) {
-                if (result.hasDelta) {
-                    accumulator += int256(result.delta);
-                }
-            } catch (bytes memory reason) {
-                _handleModuleError(config, Hook.AfterSwap, reason);
+            bytes memory payload =
+                abi.encodeWithSelector(IMODLModule.afterSwap.selector, poolManager, sender, key, params, delta, data);
+            (bool success, bytes memory returndata) = _callModuleHook(config, Hook.AfterSwap, payload);
+            if (!success || returndata.length == 0) continue;
+            IMODLModule.AfterSwapResult memory result = abi.decode(returndata, (IMODLModule.AfterSwapResult));
+            if (result.hasDelta) {
+                accumulator += int256(result.delta);
             }
         }
 
@@ -485,17 +618,17 @@ contract MODLAggregator is BaseHook, Ownable {
             ModuleConfig storage config = _modules[i];
             if (!_hasHook(config.hooksBitmap, flag)) continue;
             bytes memory data = _moduleCalldata(config.module, moduleData);
+            bytes memory payload;
             if (hook == Hook.BeforeDonate) {
-                try config.module.beforeDonate(poolManager, sender, key, amount0, amount1, data) {}
-                catch (bytes memory reason) {
-                    _handleModuleError(config, hook, reason);
-                }
+                payload = abi.encodeWithSelector(
+                    IMODLModule.beforeDonate.selector, poolManager, sender, key, amount0, amount1, data
+                );
             } else {
-                try config.module.afterDonate(poolManager, sender, key, amount0, amount1, data) {}
-                catch (bytes memory reason) {
-                    _handleModuleError(config, hook, reason);
-                }
+                payload = abi.encodeWithSelector(
+                    IMODLModule.afterDonate.selector, poolManager, sender, key, amount0, amount1, data
+                );
             }
+            _callModuleHook(config, hook, payload);
         }
     }
 
@@ -539,7 +672,7 @@ contract MODLAggregator is BaseHook, Ownable {
     }
 
     function _handleModuleError(ModuleConfig storage config, Hook hook, bytes memory reason) private {
-        if (config.failOnRevert) {
+        if (config.critical) {
             revert ModuleExecutionFailed(address(config.module), hook, reason);
         }
         emit ModuleExecutionSkipped(address(config.module), hook, reason);

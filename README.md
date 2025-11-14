@@ -4,7 +4,7 @@ MODL is a Uniswap v4 hook aggregator that lets a single pool coordinate multiple
 
 ### Architecture
 
-- **`MODLAggregator.sol`**: Extends `BaseHook` and fans out every lifecycle callback to registered modules. Each module declares which hooks it cares about plus a `failOnRevert` policy and priority. Hook data is ABI-encoded as `IMODLModule.ModuleCallData[]`, allowing callers to send per-module payloads in a single bytes blob.
+- **`MODLAggregator.sol`**: Extends `BaseHook` and fans out every lifecycle callback to registered modules. Each module declares which hooks it cares about plus a per-module gas budget, failure policy (`critical`), and priority. Hook data is ABI-encoded as `IMODLModule.ModuleCallData[]`, allowing callers to send per-module payloads in a single bytes blob. The aggregator also exposes a deterministic routing table that forwards arbitrary function selectors (like `placeOrder`) through its fallback to one or more modules.
 - **`IMODLModule`**: Shared interface covering every pool lifecycle callback plus return-value structs for hooks that produce deltas or fee overrides. Modules receive the `IPoolManager`, the hook caller, and hook-specific data.
 - **Modules**:
   - `WhitelistModule`: Reusable access control for swaps, liquidity updates, and donations. Owners manage the whitelist and can toggle enforcement per action.
@@ -27,11 +27,16 @@ MODL is a Uniswap v4 hook aggregator that lets a single pool coordinate multiple
 3. **Add new modules**
 
    - Implement `IMODLModule`, ensuring only the aggregator can invoke the hook entrypoints.
-   - Deploy the module and register it through `MODLAggregator.setModules`, providing hook flags, priority, and failure policy.
+   - Deploy the module and register it through `MODLAggregator.setModules`, providing hook flags, execution priority, per-call `gasLimit` (set to `0` for unlimited), and whether the module is `critical` (reverting the whole hook on failure).
+   - Optional: map extra function selectors (e.g., `placeOrder(bytes calldata)`) with `setRoute(bytes4 selector, uint16[] moduleIndices, ExecMode mode)` so that users can call those functions directly on the aggregator. The fallback forwards the original calldata to the routed modules, either stopping at the first module or executing every module in order depending on `ExecMode`.
 
 4. **Hook data format**
 
    Calling contracts should encode hook data as `abi.encode(IMODLModule.ModuleCallData[] memory)`. Each entry contains the module address and the payload that the module expects. The aggregator extracts the relevant payload for each module automatically.
+
+5. **Function routing**
+
+   Routes are configured via `setRoute(bytes4 selector, uint16[] moduleIndices, ExecMode mode)`. The mapping is deterministic: selectors resolve to an ordered list of module indices stored inside the aggregator, so every call takes the exact same path. Routes can be cleared with `clearRoute`. When a user calls an unknown function on the aggregator, the fallback looks up the selector and forwards the original calldata with the configured gas budget of each module. `ExecMode.FIRST` stops after the first module, while `ExecMode.ALL` executes every module and returns the last module's returndata.
 
 ### Deployment notes
 

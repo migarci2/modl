@@ -55,5 +55,6 @@ function test_whitelist_blocks_non_whitelisted() public {
 - **Script deployments** – Foundry `script/` files can deploy modules, register them, and configure routes in one transaction.
 - **Static analysis** – Use `slither` or `sforge` to ensure modules don't have reentrancy holes or unchecked external calls.
 - **Snapshots** – When you update module ordering, snapshot `_modules` via `getModules()` and compare to previous deployments to verify priorities.
+- **Scaffolding** – Use `@modl/cli` (`modl init`, `modl module:new ...`) to generate modules/tests from templates before adding your custom logic.
 
 An automated test suite that mixes module-level and aggregator-level checks is the best defense against regressions when composing many behaviors.

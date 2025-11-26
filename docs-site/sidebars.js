@@ -34,7 +34,7 @@ const sidebars = {
     {
       type: "category",
       label: "Testing & Tooling",
-      items: ["testing-tooling"]
+      items: ["testing-tooling", "cli"]
     },
     {
       type: "category",

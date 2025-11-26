@@ -28,7 +28,7 @@ MODL is a Uniswap v4 hook aggregator that lets a single pool coordinate multiple
 
    - Implement `IMODLModule`, ensuring only the aggregator can invoke the hook entrypoints.
    - Deploy the module and register it through `MODLAggregator.setModules`, providing hook flags, execution priority, per-call `gasLimit` (set to `0` for unlimited), and whether the module is `critical` (reverting the whole hook on failure).
-   - Optional: map extra function selectors (e.g., `placeOrder(bytes calldata)`) with `setRoute(bytes4 selector, uint16[] moduleIndices, ExecMode mode)` so that users can call those functions directly on the aggregator. The fallback forwards the original calldata to the routed modules, either stopping at the first module or executing every module in order depending on `ExecMode`.
+  - Optional: map extra function selectors (e.g., `placeOrder(bytes calldata)`) with `setRoute(bytes4 selector, uint16[] moduleIndices, ExecMode mode)` so that users can call those functions directly on the aggregator. The fallback forwards the original calldata to the routed modules, either stopping at the first module or executing every module in order depending on `ExecMode`.
 
 4. **Hook data format**
 
@@ -37,6 +37,21 @@ MODL is a Uniswap v4 hook aggregator that lets a single pool coordinate multiple
 5. **Function routing**
 
    Routes are configured via `setRoute(bytes4 selector, uint16[] moduleIndices, ExecMode mode)`. The mapping is deterministic: selectors resolve to an ordered list of module indices stored inside the aggregator, so every call takes the exact same path. Routes can be cleared with `clearRoute`. When a user calls an unknown function on the aggregator, the fallback looks up the selector and forwards the original calldata with the configured gas budget of each module. `ExecMode.FIRST` stops after the first module, while `ExecMode.ALL` executes every module and returns the last module's returndata.
+
+### modl CLI
+
+Generate modules and tests from templates:
+
+```bash
+npm install -g @modl/cli   # or npm install --save-dev @modl/cli
+modl init                  # writes modl.config.json and creates module/test folders
+modl template:list         # discover available templates
+modl module:new MyModule   # uses default template (basic)
+modl module:new EigenDynamicFee -t eigen-oracle
+modl module:new FhenixWhitelist -t fhenix-credentials
+```
+
+Templates are stored in `cli/templates` and rendered with simple placeholders (`{{MODULE_NAME}}`). Fhenix templates expect `@fhenixprotocol/cofhe-contracts` to be installed and remapped in Foundry.
 
 ### Deployment notes
 

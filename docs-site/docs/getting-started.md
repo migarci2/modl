@@ -1,45 +1,67 @@
 ---
 id: getting-started
 title: Getting Started
-description: Install MODL, deploy your first aggregator, and hook it to a Uniswap v4 pool.
+description: Install MODL, scaffold a module with the CLI, deploy the aggregator, and hook it to a Uniswap v4 pool.
 ---
 
-## Installation
+## Install core + CLI
 
-Install the repository as a Foundry dependency:
+Core contracts (Foundry):
 
 ```bash
 forge install migarci2/modl
 ```
 
-or wire it manually in `foundry.toml`:
+CLI (global or local):
 
-```toml
-[profile.default]
-src = 'src'
-libs = ['lib']
-
-[dependencies]
-modl = { path = 'lib/modl' }
+```bash
+npm install -g @modl/cli
+# or per project
+npm install --save-dev @modl/cli
 ```
 
-Remember to add the MODL remappings if your project already uses Uniswap v4 libraries.
+## Initialize your project
+
+Run once in the project root:
+
+```bash
+modl init
+```
+
+This writes `modl.config.json` (with `src/modules` and `test/modules` by default) and creates the folders if missing. Pass `--force` to regenerate the config.
+
+## Scaffold a module with the CLI
+
+Create a basic module:
+
+```bash
+modl module:new WhitelistAlpha
+```
+
+Or start from a pattern:
+
+```bash
+modl module:new EigenDynamicFee -t eigen-oracle
+modl module:new FhenixWhitelist -t fhenix-credentials
+```
+
+The CLI renders a Solidity module and a Forge test into the paths from `modl.config.json` (defaults: `src/modules/<Name>.sol`, `test/modules/<Name>.t.sol`).
 
 ## Minimal setup
 
-The snippet below deploys a single module plus the aggregator, then registers the module with a gas limit and `critical` flag.
+Use the generated module (e.g., `WhitelistAlpha`) with the aggregator. Deploy a single module plus the aggregator, then register the module with a gas limit and `critical` flag.
 
 ```solidity
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
 import {MODLAggregator} from "modl/src/MODLAggregator.sol";
-import {WhitelistModule} from "modl/src/modules/WhitelistModule.sol";
+import {WhitelistAlpha} from "./src/modules/WhitelistAlpha.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 
 contract DeployScript {
     function deploy(IPoolManager poolManager) external returns (MODLAggregator) {
-        WhitelistModule whitelist = new WhitelistModule(address(0));
+        WhitelistAlpha whitelist = new WhitelistAlpha(address(0));
 
         MODLAggregator.ModuleHooks memory hooks;
         hooks.beforeSwap = true;
@@ -88,10 +110,17 @@ From this point onward every lifecycle call on the pool triggers the aggregator,
 
 ## First end-to-end flow
 
-1. Deploy `WhitelistModule`, `DynamicFeeModule`, and `MODLAggregator`.
-2. Register both modules via `setModules`, giving the whitelist priority `5` (critical) and dynamic fee priority `10` (critical) with a higher gas limit.
-3. Create the pool with the aggregator's address as the hook.
-4. Call `setWhitelist(trader, true)`.
-5. Perform a swap through the pool. The aggregator runs the whitelist (reverts if sender not allowed) and then runs the fee logic (possibly overriding the LP fee) before forwarding the result back to the PoolManager.
+1. `modl module:new WhitelistAlpha`
+2. Deploy `WhitelistAlpha`, `DynamicFeeModule`, and `MODLAggregator`.
+3. Register both modules via `setModules`, giving the whitelist priority `5` (critical) and dynamic fee priority `10` (critical) with a higher gas limit.
+4. Create the pool with the aggregator's address as the hook.
+5. Call `setWhitelist(trader, true)`.
+6. Perform a swap through the pool. The aggregator runs the whitelist (reverts if sender not allowed) and then runs the fee logic (possibly overriding the LP fee) before forwarding the result back to the PoolManager.
+
+## CLI commands you need
+
+- `modl init` — create `modl.config.json` and module/test folders.
+- `modl template:list` — discover available templates (basic, eigen-*, fhenix-*).
+- `modl module:new <Name> [-t template]` — scaffold module + test from a template.
 
 This minimal path proves that multiple modules can collaborate behind the single hook address Uniswap v4 expects.

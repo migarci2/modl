@@ -44,9 +44,10 @@ const config = {
       items: [
         {type: "docSidebar", sidebarId: "docsSidebar", position: "left", label: "Docs"},
         {
-          href: "/modl/deck/",
+          href: "https://migarci2.github.io/modl/deck/",
           label: "Deck",
-          position: "left"
+          position: "left",
+          target: "_self",
         },
         {
           href: "https://github.com/migarci2/modl",

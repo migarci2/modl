@@ -6,8 +6,8 @@ const darkCodeTheme = themes.dracula;
 const config = {
   title: "MODL Docs",
   tagline: "Composable Uniswap v4 hooks for power users",
-  url: "https://example.com",
-  baseUrl: "/",
+  url: "https://migarci2.github.io",
+  baseUrl: process.env.BASE_URL || "/modl/",
   favicon: "img/logo.svg",
   organizationName: "migarci2",
   projectName: "modl",
@@ -43,6 +43,11 @@ const config = {
       title: "MODL",
       items: [
         {type: "docSidebar", sidebarId: "docsSidebar", position: "left", label: "Docs"},
+        {
+          href: "/modl/deck/",
+          label: "Deck",
+          position: "left"
+        },
         {
           href: "https://github.com/migarci2/modl",
           label: "GitHub",

@@ -40,10 +40,7 @@ abstract contract EigenTaskModule is IMODLModule, Ownable {
         authorizedFulfillment = fulfillmentAuthorizer;
     }
 
-    function _postTask(bytes memory payload, address user, bytes memory hookData)
-        internal
-        returns (bytes32 taskId)
-    {
+    function _postTask(bytes memory payload, address user, bytes memory hookData) internal returns (bytes32 taskId) {
         taskId = eigenTaskManager.postTask(payload);
         tasks[taskId] = TaskContext({user: user, hookData: hookData});
         emit EigenTaskPosted(taskId, user, payload);

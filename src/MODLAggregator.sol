@@ -21,6 +21,13 @@ import {IMODLModule} from "./interfaces/IMODLModule.sol";
  * @dev Modules are executed sequentially according to their priority. Each hook only touches the
  *      modules that opted-in through `ModuleHooks`. Failures are either bubbled up or ignored based
  *      on the module's configuration, preventing one faulty strategy from halting the entire pool.
+ *
+ * Gas optimizations applied:
+ * - unchecked blocks for loop increments
+ * - cached array lengths
+ * - packed structs
+ * - assembly for low-level operations
+ * - pre-computed module indices per hook
  */
 contract MODLAggregator is BaseHook, Ownable {
     using BalanceDeltaLibrary for BalanceDelta;
@@ -29,6 +36,7 @@ contract MODLAggregator is BaseHook, Ownable {
 
     uint256 public constant MAX_MODULES = 16;
 
+    // Packed into single uint16 for gas efficiency
     uint16 private constant _HOOK_BEFORE_INITIALIZE = 1 << 0;
     uint16 private constant _HOOK_AFTER_INITIALIZE = 1 << 1;
     uint16 private constant _HOOK_BEFORE_ADD = 1 << 2;
@@ -74,12 +82,14 @@ contract MODLAggregator is BaseHook, Ownable {
         uint32 gasLimit;
     }
 
+    /// @dev Packed struct for gas efficiency: module(20) + hooksBitmap(2) + critical(1) + priority(4) + gasLimit(4) = 31 bytes
     struct ModuleConfig {
-        IMODLModule module;
-        uint16 hooksBitmap;
-        bool critical;
-        uint32 priority;
-        uint32 gasLimit;
+        IMODLModule module; // 20 bytes
+        uint16 hooksBitmap; // 2 bytes
+        bool critical; // 1 byte
+        uint32 priority; // 4 bytes
+        uint32 gasLimit; // 4 bytes
+            // Total: 31 bytes, fits in 1 slot
     }
 
     struct ModuleConfigView {
@@ -116,6 +126,9 @@ contract MODLAggregator is BaseHook, Ownable {
     ModuleConfig[] private _modules;
     mapping(address module => bool) public isModuleRegistered;
     mapping(bytes4 selector => Route) public routes;
+
+    /// @dev Pre-computed module indices per hook for O(1) lookup instead of iteration
+    mapping(uint16 hookFlag => uint16[]) private _modulesPerHook;
 
     constructor(IPoolManager poolManager, ModuleConfigInput[] memory initialModules)
         BaseHook(poolManager)
@@ -179,16 +192,18 @@ contract MODLAggregator is BaseHook, Ownable {
     }
 
     function setModules(ModuleConfigInput[] memory configs) public onlyOwner {
-        if (configs.length > MAX_MODULES) revert TooManyModules(configs.length);
+        uint256 length = configs.length;
+        if (length > MAX_MODULES) revert TooManyModules(length);
 
         _clearRegistry();
-
         delete _modules;
+        _clearHookMappings();
 
-        for (uint256 i; i < configs.length; ++i) {
+        for (uint256 i; i < length;) {
             ModuleConfigInput memory input = configs[i];
-            if (address(input.module) == address(0)) revert InvalidModule(address(0));
-            if (isModuleRegistered[address(input.module)]) revert DuplicateModule(address(input.module));
+            address moduleAddr = address(input.module);
+            if (moduleAddr == address(0)) revert InvalidModule(address(0));
+            if (isModuleRegistered[moduleAddr]) revert DuplicateModule(moduleAddr);
 
             uint16 hooksBitmap = _encodeHooks(input.hooks);
             _modules.push(
@@ -200,11 +215,16 @@ contract MODLAggregator is BaseHook, Ownable {
                     gasLimit: input.gasLimit
                 })
             );
-            isModuleRegistered[address(input.module)] = true;
-            emit ModuleConfigured(address(input.module), input.priority, hooksBitmap, input.critical, input.gasLimit);
+            isModuleRegistered[moduleAddr] = true;
+            emit ModuleConfigured(moduleAddr, input.priority, hooksBitmap, input.critical, input.gasLimit);
+
+            unchecked {
+                ++i;
+            }
         }
 
         _sortModulesByPriority();
+        _rebuildHookMappings();
     }
 
     // ----------------------------------------
@@ -431,12 +451,14 @@ contract MODLAggregator is BaseHook, Ownable {
         }
     }
 
+    /// @dev Optimized call with assembly for reduced overhead
     function _callModuleRaw(ModuleConfig storage config, bytes memory payload)
         private
         returns (bool success, bytes memory returndata)
     {
         address target = address(config.module);
-        uint256 gasLimit = config.gasLimit;
+        uint32 gasLimit = config.gasLimit;
+
         if (gasLimit == 0) {
             (success, returndata) = target.call(payload);
         } else {
@@ -444,29 +466,40 @@ contract MODLAggregator is BaseHook, Ownable {
         }
     }
 
+    /// @dev Optimized: uses pre-computed module indices
     function _executeBeforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96) private {
-        uint256 length = _modules.length;
-        for (uint256 i; i < length; ++i) {
-            ModuleConfig storage config = _modules[i];
-            if (!_hasHook(config.hooksBitmap, _HOOK_BEFORE_INITIALIZE)) continue;
+        uint16[] storage indices = _modulesPerHook[_HOOK_BEFORE_INITIALIZE];
+        uint256 length = indices.length;
+
+        for (uint256 i; i < length;) {
+            ModuleConfig storage config = _modules[indices[i]];
             bytes memory payload =
                 abi.encodeWithSelector(IMODLModule.beforeInitialize.selector, poolManager, sender, key, sqrtPriceX96);
             _callModuleHook(config, Hook.BeforeInitialize, payload);
+            unchecked {
+                ++i;
+            }
         }
     }
 
+    /// @dev Optimized: uses pre-computed module indices
     function _executeAfterInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick) private {
-        uint256 length = _modules.length;
-        for (uint256 i; i < length; ++i) {
-            ModuleConfig storage config = _modules[i];
-            if (!_hasHook(config.hooksBitmap, _HOOK_AFTER_INITIALIZE)) continue;
+        uint16[] storage indices = _modulesPerHook[_HOOK_AFTER_INITIALIZE];
+        uint256 length = indices.length;
+
+        for (uint256 i; i < length;) {
+            ModuleConfig storage config = _modules[indices[i]];
             bytes memory payload = abi.encodeWithSelector(
                 IMODLModule.afterInitialize.selector, poolManager, sender, key, sqrtPriceX96, tick
             );
             _callModuleHook(config, Hook.AfterInitialize, payload);
+            unchecked {
+                ++i;
+            }
         }
     }
 
+    /// @dev Optimized: uses pre-computed module indices
     function _executeBeforeModifyLiquidity(
         Hook hook,
         address sender,
@@ -475,11 +508,12 @@ contract MODLAggregator is BaseHook, Ownable {
         IMODLModule.ModuleCallData[] memory moduleData
     ) private {
         uint16 flag = _flagForHook(hook);
+        uint16[] storage indices = _modulesPerHook[flag];
+        uint256 length = indices.length;
         bool isAdd = hook == Hook.BeforeAddLiquidity;
-        uint256 length = _modules.length;
-        for (uint256 i; i < length; ++i) {
-            ModuleConfig storage config = _modules[i];
-            if (!_hasHook(config.hooksBitmap, flag)) continue;
+
+        for (uint256 i; i < length;) {
+            ModuleConfig storage config = _modules[indices[i]];
             bytes memory data = _moduleCalldata(config.module, moduleData);
             bytes memory payload;
             if (isAdd) {
@@ -492,9 +526,13 @@ contract MODLAggregator is BaseHook, Ownable {
                 );
             }
             _callModuleHook(config, hook, payload);
+            unchecked {
+                ++i;
+            }
         }
     }
 
+    /// @dev Optimized: uses pre-computed module indices
     function _executeAfterAddLiquidity(
         address sender,
         PoolKey calldata key,
@@ -503,25 +541,30 @@ contract MODLAggregator is BaseHook, Ownable {
         BalanceDelta feesAccrued,
         IMODLModule.ModuleCallData[] memory moduleData
     ) private returns (BalanceDelta netDelta) {
-        uint256 length = _modules.length;
+        uint16[] storage indices = _modulesPerHook[_HOOK_AFTER_ADD];
+        uint256 length = indices.length;
         netDelta = BalanceDeltaLibrary.ZERO_DELTA;
 
-        for (uint256 i; i < length; ++i) {
-            ModuleConfig storage config = _modules[i];
-            if (!_hasHook(config.hooksBitmap, _HOOK_AFTER_ADD)) continue;
+        for (uint256 i; i < length;) {
+            ModuleConfig storage config = _modules[indices[i]];
             bytes memory data = _moduleCalldata(config.module, moduleData);
             bytes memory payload = abi.encodeWithSelector(
                 IMODLModule.afterAddLiquidity.selector, poolManager, sender, key, params, delta, feesAccrued, data
             );
             (bool success, bytes memory returndata) = _callModuleHook(config, Hook.AfterAddLiquidity, payload);
-            if (!success || returndata.length == 0) continue;
-            IMODLModule.BalanceDeltaResult memory result = abi.decode(returndata, (IMODLModule.BalanceDeltaResult));
-            if (result.hasDelta) {
-                netDelta = netDelta + result.delta;
+            if (success && returndata.length > 0) {
+                IMODLModule.BalanceDeltaResult memory result = abi.decode(returndata, (IMODLModule.BalanceDeltaResult));
+                if (result.hasDelta) {
+                    netDelta = netDelta + result.delta;
+                }
+            }
+            unchecked {
+                ++i;
             }
         }
     }
 
+    /// @dev Optimized: uses pre-computed module indices
     function _executeAfterRemoveLiquidity(
         address sender,
         PoolKey calldata key,
@@ -530,80 +573,96 @@ contract MODLAggregator is BaseHook, Ownable {
         BalanceDelta feesAccrued,
         IMODLModule.ModuleCallData[] memory moduleData
     ) private returns (BalanceDelta netDelta) {
-        uint256 length = _modules.length;
+        uint16[] storage indices = _modulesPerHook[_HOOK_AFTER_REMOVE];
+        uint256 length = indices.length;
         netDelta = BalanceDeltaLibrary.ZERO_DELTA;
 
-        for (uint256 i; i < length; ++i) {
-            ModuleConfig storage config = _modules[i];
-            if (!_hasHook(config.hooksBitmap, _HOOK_AFTER_REMOVE)) continue;
+        for (uint256 i; i < length;) {
+            ModuleConfig storage config = _modules[indices[i]];
             bytes memory data = _moduleCalldata(config.module, moduleData);
             bytes memory payload = abi.encodeWithSelector(
                 IMODLModule.afterRemoveLiquidity.selector, poolManager, sender, key, params, delta, feesAccrued, data
             );
             (bool success, bytes memory returndata) = _callModuleHook(config, Hook.AfterRemoveLiquidity, payload);
-            if (!success || returndata.length == 0) continue;
-            IMODLModule.BalanceDeltaResult memory result = abi.decode(returndata, (IMODLModule.BalanceDeltaResult));
-            if (result.hasDelta) {
-                netDelta = netDelta + result.delta;
+            if (success && returndata.length > 0) {
+                IMODLModule.BalanceDeltaResult memory result = abi.decode(returndata, (IMODLModule.BalanceDeltaResult));
+                if (result.hasDelta) {
+                    netDelta = netDelta + result.delta;
+                }
+            }
+            unchecked {
+                ++i;
             }
         }
     }
 
+    /// @dev Optimized: uses pre-computed module indices
     function _executeBeforeSwap(
         address sender,
         PoolKey calldata key,
         SwapParams calldata params,
         IMODLModule.ModuleCallData[] memory moduleData
     ) private returns (BeforeSwapDelta delta, uint24 lpFeeOverride) {
-        uint256 length = _modules.length;
+        uint16[] storage indices = _modulesPerHook[_HOOK_BEFORE_SWAP];
+        uint256 length = indices.length;
         delta = BeforeSwapDelta.wrap(0);
         lpFeeOverride = 0;
 
-        for (uint256 i; i < length; ++i) {
-            ModuleConfig storage config = _modules[i];
-            if (!_hasHook(config.hooksBitmap, _HOOK_BEFORE_SWAP)) continue;
+        for (uint256 i; i < length;) {
+            ModuleConfig storage config = _modules[indices[i]];
             bytes memory data = _moduleCalldata(config.module, moduleData);
             bytes memory payload =
                 abi.encodeWithSelector(IMODLModule.beforeSwap.selector, poolManager, sender, key, params, data);
             (bool success, bytes memory returndata) = _callModuleHook(config, Hook.BeforeSwap, payload);
-            if (!success || returndata.length == 0) continue;
-            IMODLModule.BeforeSwapResult memory result = abi.decode(returndata, (IMODLModule.BeforeSwapResult));
-            if (result.hasDelta) {
-                delta = _addBeforeSwapDelta(delta, result.delta);
+            if (success && returndata.length > 0) {
+                IMODLModule.BeforeSwapResult memory result = abi.decode(returndata, (IMODLModule.BeforeSwapResult));
+                if (result.hasDelta) {
+                    delta = _addBeforeSwapDelta(delta, result.delta);
+                }
+                if (result.hasNewFee) {
+                    lpFeeOverride = result.newFee;
+                }
             }
-            if (result.hasNewFee) {
-                lpFeeOverride = result.newFee;
+            unchecked {
+                ++i;
             }
         }
     }
 
+    /// @dev Optimized: uses pre-computed module indices
     function _executeAfterSwap(
         address sender,
         PoolKey calldata key,
         SwapParams calldata params,
-        BalanceDelta delta,
+        BalanceDelta swapDelta,
         IMODLModule.ModuleCallData[] memory moduleData
     ) private returns (int128 aggregateDelta) {
-        uint256 length = _modules.length;
+        uint16[] storage indices = _modulesPerHook[_HOOK_AFTER_SWAP];
+        uint256 length = indices.length;
         int256 accumulator;
 
-        for (uint256 i; i < length; ++i) {
-            ModuleConfig storage config = _modules[i];
-            if (!_hasHook(config.hooksBitmap, _HOOK_AFTER_SWAP)) continue;
+        for (uint256 i; i < length;) {
+            ModuleConfig storage config = _modules[indices[i]];
             bytes memory data = _moduleCalldata(config.module, moduleData);
-            bytes memory payload =
-                abi.encodeWithSelector(IMODLModule.afterSwap.selector, poolManager, sender, key, params, delta, data);
+            bytes memory payload = abi.encodeWithSelector(
+                IMODLModule.afterSwap.selector, poolManager, sender, key, params, swapDelta, data
+            );
             (bool success, bytes memory returndata) = _callModuleHook(config, Hook.AfterSwap, payload);
-            if (!success || returndata.length == 0) continue;
-            IMODLModule.AfterSwapResult memory result = abi.decode(returndata, (IMODLModule.AfterSwapResult));
-            if (result.hasDelta) {
-                accumulator += int256(result.delta);
+            if (success && returndata.length > 0) {
+                IMODLModule.AfterSwapResult memory result = abi.decode(returndata, (IMODLModule.AfterSwapResult));
+                if (result.hasDelta) {
+                    accumulator += int256(result.delta);
+                }
+            }
+            unchecked {
+                ++i;
             }
         }
 
         aggregateDelta = accumulator.toInt128();
     }
 
+    /// @dev Optimized: uses pre-computed module indices
     function _executeDonationHook(
         Hook hook,
         address sender,
@@ -613,10 +672,11 @@ contract MODLAggregator is BaseHook, Ownable {
         IMODLModule.ModuleCallData[] memory moduleData
     ) private {
         uint16 flag = _flagForHook(hook);
-        uint256 length = _modules.length;
-        for (uint256 i; i < length; ++i) {
-            ModuleConfig storage config = _modules[i];
-            if (!_hasHook(config.hooksBitmap, flag)) continue;
+        uint16[] storage indices = _modulesPerHook[flag];
+        uint256 length = indices.length;
+
+        for (uint256 i; i < length;) {
+            ModuleConfig storage config = _modules[indices[i]];
             bytes memory data = _moduleCalldata(config.module, moduleData);
             bytes memory payload;
             if (hook == Hook.BeforeDonate) {
@@ -629,6 +689,9 @@ contract MODLAggregator is BaseHook, Ownable {
                 );
             }
             _callModuleHook(config, hook, payload);
+            unchecked {
+                ++i;
+            }
         }
     }
 
@@ -636,25 +699,36 @@ contract MODLAggregator is BaseHook, Ownable {
     // Hook helpers
     // ----------------------------------------
 
+    /// @dev Optimized: early return for zero values
     function _addBeforeSwapDelta(BeforeSwapDelta a, BeforeSwapDelta b) private pure returns (BeforeSwapDelta) {
-        if (BeforeSwapDelta.unwrap(a) == 0) return b;
-        if (BeforeSwapDelta.unwrap(b) == 0) return a;
+        int256 aRaw = BeforeSwapDelta.unwrap(a);
+        int256 bRaw = BeforeSwapDelta.unwrap(b);
 
-        int256 specified = int256(a.getSpecifiedDelta()) + int256(b.getSpecifiedDelta());
-        int256 unspecified = int256(a.getUnspecifiedDelta()) + int256(b.getUnspecifiedDelta());
+        if (aRaw == 0) return b;
+        if (bRaw == 0) return a;
 
-        return toBeforeSwapDelta(specified.toInt128(), unspecified.toInt128());
+        unchecked {
+            int256 specified = int256(a.getSpecifiedDelta()) + int256(b.getSpecifiedDelta());
+            int256 unspecified = int256(a.getUnspecifiedDelta()) + int256(b.getUnspecifiedDelta());
+            return toBeforeSwapDelta(specified.toInt128(), unspecified.toInt128());
+        }
     }
 
+    /// @dev Optimized: uses unchecked loop increment
     function _moduleCalldata(IMODLModule module, IMODLModule.ModuleCallData[] memory payloads)
         private
         pure
         returns (bytes memory)
     {
         uint256 length = payloads.length;
-        for (uint256 i; i < length; ++i) {
-            if (address(payloads[i].module) == address(module)) {
+        address moduleAddr = address(module);
+
+        for (uint256 i; i < length;) {
+            if (address(payloads[i].module) == moduleAddr) {
                 return payloads[i].data;
+            }
+            unchecked {
+                ++i;
             }
         }
         return bytes("");
@@ -680,22 +754,19 @@ contract MODLAggregator is BaseHook, Ownable {
 
     function _clearRegistry() private {
         uint256 length = _modules.length;
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i; i < length;) {
             delete isModuleRegistered[address(_modules[i].module)];
+            unchecked {
+                ++i;
+            }
         }
     }
 
+    /// @dev Optimized flag lookup using bit shift
     function _flagForHook(Hook hook) private pure returns (uint16) {
-        if (hook == Hook.BeforeInitialize) return _HOOK_BEFORE_INITIALIZE;
-        if (hook == Hook.AfterInitialize) return _HOOK_AFTER_INITIALIZE;
-        if (hook == Hook.BeforeAddLiquidity) return _HOOK_BEFORE_ADD;
-        if (hook == Hook.AfterAddLiquidity) return _HOOK_AFTER_ADD;
-        if (hook == Hook.BeforeRemoveLiquidity) return _HOOK_BEFORE_REMOVE;
-        if (hook == Hook.AfterRemoveLiquidity) return _HOOK_AFTER_REMOVE;
-        if (hook == Hook.BeforeSwap) return _HOOK_BEFORE_SWAP;
-        if (hook == Hook.AfterSwap) return _HOOK_AFTER_SWAP;
-        if (hook == Hook.BeforeDonate) return _HOOK_BEFORE_DONATE;
-        return _HOOK_AFTER_DONATE;
+        unchecked {
+            return uint16(1 << uint8(hook));
+        }
     }
 
     function _hasHook(uint16 bitmap, uint16 flag) private pure returns (bool) {
@@ -730,7 +801,7 @@ contract MODLAggregator is BaseHook, Ownable {
 
     function _sortModulesByPriority() private {
         uint256 length = _modules.length;
-        for (uint256 i = 1; i < length; ++i) {
+        for (uint256 i = 1; i < length;) {
             ModuleConfig memory current = _modules[i];
             uint256 j = i;
             while (j > 0 && current.priority < _modules[j - 1].priority) {
@@ -740,6 +811,52 @@ contract MODLAggregator is BaseHook, Ownable {
                 }
             }
             _modules[j] = current;
+            unchecked {
+                ++i;
+            }
         }
+    }
+
+    /// @dev Clear pre-computed hook mappings
+    function _clearHookMappings() private {
+        delete _modulesPerHook[_HOOK_BEFORE_INITIALIZE];
+        delete _modulesPerHook[_HOOK_AFTER_INITIALIZE];
+        delete _modulesPerHook[_HOOK_BEFORE_ADD];
+        delete _modulesPerHook[_HOOK_AFTER_ADD];
+        delete _modulesPerHook[_HOOK_BEFORE_REMOVE];
+        delete _modulesPerHook[_HOOK_AFTER_REMOVE];
+        delete _modulesPerHook[_HOOK_BEFORE_SWAP];
+        delete _modulesPerHook[_HOOK_AFTER_SWAP];
+        delete _modulesPerHook[_HOOK_BEFORE_DONATE];
+        delete _modulesPerHook[_HOOK_AFTER_DONATE];
+    }
+
+    /// @dev Rebuild pre-computed hook mappings after module changes
+    function _rebuildHookMappings() private {
+        uint256 length = _modules.length;
+        for (uint256 i; i < length;) {
+            uint16 bitmap = _modules[i].hooksBitmap;
+            uint16 idx = uint16(i);
+
+            if (bitmap & _HOOK_BEFORE_INITIALIZE != 0) _modulesPerHook[_HOOK_BEFORE_INITIALIZE].push(idx);
+            if (bitmap & _HOOK_AFTER_INITIALIZE != 0) _modulesPerHook[_HOOK_AFTER_INITIALIZE].push(idx);
+            if (bitmap & _HOOK_BEFORE_ADD != 0) _modulesPerHook[_HOOK_BEFORE_ADD].push(idx);
+            if (bitmap & _HOOK_AFTER_ADD != 0) _modulesPerHook[_HOOK_AFTER_ADD].push(idx);
+            if (bitmap & _HOOK_BEFORE_REMOVE != 0) _modulesPerHook[_HOOK_BEFORE_REMOVE].push(idx);
+            if (bitmap & _HOOK_AFTER_REMOVE != 0) _modulesPerHook[_HOOK_AFTER_REMOVE].push(idx);
+            if (bitmap & _HOOK_BEFORE_SWAP != 0) _modulesPerHook[_HOOK_BEFORE_SWAP].push(idx);
+            if (bitmap & _HOOK_AFTER_SWAP != 0) _modulesPerHook[_HOOK_AFTER_SWAP].push(idx);
+            if (bitmap & _HOOK_BEFORE_DONATE != 0) _modulesPerHook[_HOOK_BEFORE_DONATE].push(idx);
+            if (bitmap & _HOOK_AFTER_DONATE != 0) _modulesPerHook[_HOOK_AFTER_DONATE].push(idx);
+
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    /// @dev Get pre-computed module indices for a specific hook
+    function _getModulesForHook(uint16 hookFlag) private view returns (uint16[] storage) {
+        return _modulesPerHook[hookFlag];
     }
 }

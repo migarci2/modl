@@ -43,12 +43,19 @@ MODL is a Uniswap v4 hook aggregator that lets a single pool coordinate multiple
 Generate modules and tests from templates:
 
 ```bash
-npm install -g @modl/cli   # or npm install --save-dev @modl/cli
-modl init                  # writes modl.config.json and creates module/test folders
-modl template:list         # discover available templates
-modl module:new MyModule   # uses default template (basic)
+npm install -g @modl-dev/cli   # or npm install --save-dev @modl-dev/cli
+modl init                      # writes modl.config.json and creates module/test folders
+modl template:list             # discover available templates
+modl module:new MyModule       # uses default template (basic)
 modl module:new EigenDynamicFee -t eigen-oracle
 modl module:new FhenixWhitelist -t fhenix-credentials
+```
+
+You can also use it directly with npx:
+
+```bash
+npx @modl-dev/cli init
+npx @modl-dev/cli module:new MyModule
 ```
 
 Templates are stored in `cli/templates` and rendered with simple placeholders (`{{MODULE_NAME}}`). Fhenix templates expect `@fhenixprotocol/cofhe-contracts` to be installed and remapped in Foundry.

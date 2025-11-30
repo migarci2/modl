@@ -13,3 +13,16 @@ docs/
 
 # Dotenv file
 .env
+
+# Node.js
+node_modules/
+dist/
+
+# CLI build artifacts
+cli/dist/
+cli/node_modules/
+
+# Docs site build
+docs-site/node_modules/
+docs-site/build/
+docs-site/.docusaurus/

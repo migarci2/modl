@@ -12,12 +12,14 @@ import {IMODLModule} from "../interfaces/IMODLModule.sol";
 /**
  * @title WhitelistModule
  * @notice Simple allow-list gate that can be enabled for swaps, liquidity updates and donations.
+ * @dev Gas optimized with packed storage and unchecked loops.
  */
 contract WhitelistModule is IMODLModule, Ownable {
     address public immutable AGGREGATOR;
 
     mapping(address => bool) public isAllowed;
 
+    /// @dev Packed into single storage slot (3 bools = 3 bytes)
     bool public enforceLiquidity = true;
     bool public enforceSwaps = true;
     bool public enforceDonations = true;
@@ -51,11 +53,15 @@ contract WhitelistModule is IMODLModule, Ownable {
         emit WhitelistUpdated(account, allowed);
     }
 
+    /// @dev Optimized batch whitelist with unchecked loop
     function setBatchWhitelist(address[] calldata accounts, bool allowed) external onlyOwner {
         uint256 length = accounts.length;
-        for (uint256 i; i < length; ++i) {
+        for (uint256 i; i < length;) {
             isAllowed[accounts[i]] = allowed;
             emit WhitelistUpdated(accounts[i], allowed);
+            unchecked {
+                ++i;
+            }
         }
     }
 
@@ -84,6 +90,7 @@ contract WhitelistModule is IMODLModule, Ownable {
         if (enforceLiquidity) _requireWhitelisted(sender);
     }
 
+    /// @dev Returns empty delta - no token adjustments
     function afterAddLiquidity(
         IPoolManager,
         address,

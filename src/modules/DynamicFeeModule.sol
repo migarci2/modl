@@ -13,12 +13,14 @@ import {IMODLModule} from "../interfaces/IMODLModule.sol";
 /**
  * @title DynamicFeeModule
  * @notice Simple volatility-aware fee calculator that overrides the LP fee for dynamic-fee pools.
+ * @dev Gas optimized with packed storage and unchecked arithmetic.
  */
 contract DynamicFeeModule is IMODLModule, Ownable {
     uint256 private constant MULTIPLIER_DENOMINATOR = 1e4;
 
     address public immutable AGGREGATOR;
 
+    /// @dev Packed into single storage slot: 24 + 24 + 24 + 24 + 24 = 120 bits < 256 bits
     uint24 public minFee;
     uint24 public maxFee;
     uint24 public baseFee;
@@ -87,6 +89,7 @@ contract DynamicFeeModule is IMODLModule, Ownable {
         // No-op
     }
 
+    /// @dev Returns empty delta - no token adjustments
     function afterAddLiquidity(
         IPoolManager,
         address,
@@ -157,23 +160,27 @@ contract DynamicFeeModule is IMODLModule, Ownable {
         // No-op
     }
 
+    /// @dev Resolve fee from moduleData or compute dynamically
     function _resolveFee(bytes calldata moduleData) private view returns (uint24) {
         if (moduleData.length == 0) return _computeFee();
         SwapFeeInstruction memory instruction = abi.decode(moduleData, (SwapFeeInstruction));
-        if (!instruction.useCustomFee) {
-            return _computeFee();
-        }
-        return _clampFee(instruction.customFee);
+        return instruction.useCustomFee ? _clampFee(instruction.customFee) : _computeFee();
     }
 
+    /// @dev Optimized fee computation with unchecked arithmetic (values are bounded)
     function _computeFee() private view returns (uint24) {
-        uint256 variableFee = (uint256(volatilityIndex) * uint256(volatilityMultiplier)) / MULTIPLIER_DENOMINATOR;
-        uint256 candidate = uint256(baseFee) + variableFee;
-        if (candidate > maxFee) candidate = maxFee;
-        if (candidate < minFee) candidate = minFee;
-        return uint24(candidate);
+        unchecked {
+            uint256 variableFee = (uint256(volatilityIndex) * uint256(volatilityMultiplier)) / MULTIPLIER_DENOMINATOR;
+            uint256 candidate = uint256(baseFee) + variableFee;
+
+            // Clamp to bounds
+            if (candidate > maxFee) return maxFee;
+            if (candidate < minFee) return minFee;
+            return uint24(candidate);
+        }
     }
 
+    /// @dev Clamp fee to configured bounds
     function _clampFee(uint24 fee) private view returns (uint24) {
         if (fee < minFee) return minFee;
         if (fee > maxFee) return maxFee;

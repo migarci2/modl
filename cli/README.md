@@ -5,9 +5,15 @@ Code generator for MODL modules. It is explicit and template-driven: the CLI wri
 ## Install
 
 ```bash
-npm install -g @modl/cli
+npm install -g @modl-dev/cli
 # or locally
-npm install --save-dev @modl/cli
+npm install --save-dev @modl-dev/cli
+```
+
+You can also use it directly with npx:
+
+```bash
+npx @modl-dev/cli init
 ```
 
 ## Commands

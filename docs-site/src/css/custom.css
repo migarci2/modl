@@ -1,13 +1,228 @@
+/* Neobrutalist Theme for MODL Docs */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&display=swap');
+
 :root {
-  --ifm-color-primary: #1a7f64;
-  --ifm-color-primary-dark: #166f57;
-  --ifm-color-primary-darker: #14664f;
-  --ifm-color-primary-darkest: #0f4f3c;
-  --ifm-color-primary-light: #228f72;
-  --ifm-color-primary-lighter: #26987a;
-  --ifm-color-primary-lightest: #30b28f;
+  /* Core Colors */
+  --ifm-color-primary: #f472b6;
+  /* Pink-400 */
+  --ifm-color-primary-dark: #ec4899;
+  --ifm-color-primary-darker: #db2777;
+  --ifm-color-primary-darkest: #be185d;
+  --ifm-color-primary-light: #fbcfe8;
+  --ifm-color-primary-lighter: #fce7f3;
+  --ifm-color-primary-lightest: #fff1f2;
+
+  --ifm-font-family-base: 'JetBrains Mono', monospace;
+  --ifm-font-family-monospace: 'JetBrains Mono', monospace;
+
+  /* Backgrounds & Text */
+  --ifm-background-color: #ffffff;
+  --ifm-background-surface-color: #ffffff;
+  --ifm-text-color: #000000;
+  --ifm-heading-color: #000000;
+
+  /* Borders & Shadows */
+  --modl-border: 2px solid #000000;
+  --modl-shadow: 4px 4px 0 0 #000000;
+  --modl-shadow-sm: 2px 2px 0 0 #000000;
+
+  /* Overrides */
+  --ifm-navbar-background-color: #ffffff;
+  --ifm-navbar-shadow: none;
+  --ifm-navbar-height: 4rem;
+
+  --ifm-menu-color: #000000;
+  --ifm-menu-color-active: #f472b6;
+  --ifm-menu-color-background-active: #000000;
+  --ifm-menu-color-background-hover: #f3f4f6;
+
+  --ifm-link-color: #000000;
+  --ifm-link-decoration: underline;
+  --ifm-link-hover-color: #f472b6;
 }
 
+/* Dark Mode Overrides (Force Light/Neo Mode or adapt) */
+[data-theme='dark'] {
+  --ifm-background-color: #111827;
+  --ifm-background-surface-color: #1f2937;
+  --ifm-text-color: #ffffff;
+  --ifm-heading-color: #ffffff;
+  --modl-border: 2px solid #ffffff;
+  --modl-shadow: 4px 4px 0 0 #ffffff;
+  --ifm-navbar-background-color: #111827;
+  --ifm-link-color: #ffffff;
+  --ifm-menu-color: #ffffff;
+}
+
+/* General Layout */
+body {
+  border: 4px solid #000000;
+  min-height: 100vh;
+}
+
+/* Navbar */
+.navbar {
+  border-bottom: var(--modl-border);
+}
+
+.navbar__logo {
+  border: 2px solid #000000;
+  background: #000;
+  padding: 2px;
+}
+
+/* Sidebar */
+.theme-doc-sidebar-container {
+  border-right: var(--modl-border);
+}
+
+/* Cards & Containers */
+.card {
+  border: var(--modl-border);
+  box-shadow: var(--modl-shadow);
+  border-radius: 0;
+  margin-bottom: 1.5rem;
+}
+
+.card__header {
+  background: #fdf2f8;
+  /* Pink-50 */
+  border-bottom: var(--modl-border);
+}
+
+/* Admonitions */
+.alert {
+  border: var(--modl-border);
+  box-shadow: var(--modl-shadow-sm);
+  border-radius: 0;
+  color: #000;
+}
+
+.alert--info {
+  background-color: #bfdbfe;
+  border-color: #000;
+}
+
+/* Blue-200 */
+.alert--success {
+  background-color: #bbf7d0;
+  border-color: #000;
+}
+
+/* Green-200 */
+.alert--warning {
+  background-color: #fde047;
+  border-color: #000;
+}
+
+/* Yellow-300 */
+.alert--danger {
+  background-color: #fca5a5;
+  border-color: #000;
+}
+
+/* Red-300 */
+
+/* Buttons */
+.button {
+  border: var(--modl-border);
+  box-shadow: var(--modl-shadow-sm);
+  border-radius: 0;
+  font-weight: 800;
+  text-transform: uppercase;
+  transition: all 0.1s;
+}
+
+.button:active {
+  transform: translate(2px, 2px);
+  box-shadow: none;
+}
+
+.button--primary {
+  background-color: #000000;
+  color: #ffffff;
+  --ifm-button-background-color: #000000;
+  --ifm-button-color: #ffffff;
+}
+
+.button--secondary {
+  background-color: #ffffff;
+  color: #000000;
+}
+
+/* Code Blocks */
+code {
+  border: 1px solid #000000;
+  background-color: #f3f4f6;
+  color: #000000;
+  border-radius: 0;
+}
+
+pre {
+  border: var(--modl-border);
+  box-shadow: var(--modl-shadow);
+  border-radius: 0;
+  background-color: #111827;
+}
+
+/* Typography */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: -0.02em;
+}
+
+h1 {
+  background: #f472b6;
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border: var(--modl-border);
+  box-shadow: var(--modl-shadow);
+  transform: rotate(-1deg);
+  margin-bottom: 2rem;
+}
+
+h2 {
+  border-bottom: 4px solid #000;
+  padding-bottom: 0.5rem;
+  display: inline-block;
+}
+
+/* Hero Banner */
 .heroBanner {
+  background-color: #fef08a;
+  /* Yellow-200 */
+  border-bottom: var(--modl-border);
+  padding: 4rem 0;
   text-align: center;
+}
+
+.hero__title {
+  font-size: 4rem;
+  text-shadow: 4px 4px 0 #000;
+  color: #f472b6;
+  /* Pink-400 */
+  -webkit-text-stroke: 2px black;
+}
+
+/* Footer */
+.footer {
+  border-top: var(--modl-border);
+  background-color: #000000;
+  color: #ffffff;
+}
+
+.footer__link-item {
+  color: #ffffff;
+  text-decoration: none;
+}
+
+.footer__link-item:hover {
+  color: #f472b6;
+  text-decoration: underline;
 }

@@ -67,10 +67,6 @@
   --ifm-toc-link-color: #94a3b8;
 }
 
-[data-theme='dark'] body {
-  border-color: #f472b6;
-}
-
 [data-theme='dark'] .navbar {
   border-bottom-color: #f472b6;
 }
@@ -95,10 +91,6 @@
 }
 
 /* General Layout */
-body {
-  border: 3px solid #000000;
-  min-height: 100vh;
-}
 
 /* Navbar */
 .navbar {

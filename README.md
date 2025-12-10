@@ -1,4 +1,5 @@
 ## MODL – Modular On-Chain Dynamic Logic
+<img width="706" height="406" alt="image" src="https://github.com/user-attachments/assets/cf12708d-5096-4a89-a6de-a2d6b7fe1e0b" />
 
 ### 🔗 Live Demo & Documentation
 

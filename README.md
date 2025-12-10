@@ -1,5 +1,11 @@
 ## MODL – Modular On-Chain Dynamic Logic
 
+### 🔗 Live Demo & Documentation
+
+- **[Documentation](https://migarci2.github.io/modl/)**: Comprehensive guides, architecture overview, and API references.
+- **[Interactive Demo](https://migarci2.github.io/modl/demo/)**: A live dApp to configure, mine, and deploy hooks composed of multiple configurable modules.
+- **[Pitch Deck](https://migarci2.github.io/modl/deck/)**: High-level presentation of the project vision and features.
+
 MODL is a Uniswap v4 hook aggregator that lets a single pool coordinate multiple pieces of custom logic. Instead of writing a monolithic hook, developers compose reusable modules that implement the `IMODLModule` interface. The aggregator enforces ordering, error handling, and hook-data routing so each module stays isolated.
 
 ### Architecture

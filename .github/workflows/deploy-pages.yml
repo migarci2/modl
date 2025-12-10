@@ -29,6 +29,7 @@ jobs:
           cache-dependency-path: |
             docs-site/package-lock.json
             deck/package-lock.json
+            demo/package-lock.json
 
       # Build Docs (Docusaurus)
       - name: Install docs dependencies
@@ -50,6 +51,17 @@ jobs:
         working-directory: deck
         run: npm run build -- --base=/modl/deck/
 
+      # Build Demo dApp (Vite)
+      - name: Install demo dependencies
+        working-directory: demo
+        run: npm ci
+
+      - name: Build demo
+        working-directory: demo
+        run: npm run build
+        env:
+          DEMO_BASE: /modl/demo/
+
       # Combine outputs
       - name: Prepare combined output
         run: |
@@ -59,6 +71,9 @@ jobs:
           # Copy deck to /deck subdirectory
           mkdir -p _site/deck
           cp -r deck/dist/* _site/deck/
+          # Copy demo to /demo subdirectory
+          mkdir -p _site/demo
+          cp -r demo/dist/* _site/demo/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

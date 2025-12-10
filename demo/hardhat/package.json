@@ -1,0 +1,23 @@
+{
+  "name": "@modl/hardhat",
+  "version": "0.1.0",
+  "description": "Hardhat runner to deploy MODL aggregator + modules using Foundry artifacts",
+  "main": "index.js",
+  "scripts": {
+    "compile": "echo \"Compile with forge build (uses Foundry)\"",
+    "deploy:sepolia": "hardhat run --network sepolia --no-compile scripts/deploy-modl.ts",
+    "deploy:mainnet": "hardhat run --network mainnet --no-compile scripts/deploy-modl.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ethers": "^4.0.3",
+    "@types/node": "^24.10.2",
+    "dotenv": "^17.2.3",
+    "ethers": "^6.16.0",
+    "hardhat": "^3.0.17",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

@@ -11,9 +11,9 @@ The `@modl/cli` is a code generator for MODL modules. It writes Solidity modules
 Requires Node.js 18+.
 
 ```bash
-npm install -g @modl/cli
+npm install -g @modl-dev/cli
 # or locally per project
-npm install --save-dev @modl/cli
+npm install --save-dev @modl-dev/cli
 ```
 
 Check it works:

@@ -241,7 +241,7 @@ export default function App() {
   };
 
   const fetchArtifact = async (name: typeof supportedArtifacts[number]) => {
-    const res = await fetch(`/abi/${name}.json`);
+    const res = await fetch(`${import.meta.env.BASE_URL}abi/${name}.json`);
     if (!res.ok) throw new Error(`Artifact ${name} not found. Run forge build to refresh /public/abi.`);
     return res.json();
   };

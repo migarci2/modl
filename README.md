@@ -17,6 +17,34 @@ MODL is a Uniswap v4 hook aggregator that lets a single pool coordinate multiple
   - `WhitelistModule`: Reusable access control for swaps, liquidity updates, and donations. Owners manage the whitelist and can toggle enforcement per action.
   - `DynamicFeeModule`: Computes a dynamic LP fee override based on configurable volatility parameters or per-swap instructions embedded in hook data.
 
+### Fhenix Integration
+
+MODL includes modules that leverage [Fhenix](https://www.fhenix.io/) Fully Homomorphic Encryption (FHE) for privacy-preserving hook logic:
+
+- **`FhenixCredentialsModule`**: Abstract base for modules that validate user credentials using encrypted data. Callers submit encrypted credentials which are verified without revealing the underlying values.
+- **`FhenixWhitelistModule`**: Production-ready allow-list that defers credential validation to an off-chain Fhenix verifier. The module gates swaps, liquidity updates, and donations based on privacy-preserving proofs.
+- **`FhenixAsyncModule`**: Base helper for modules that outsource private computation to a Fhenix co-processor. Handles task context storage and result callback routing.
+
+Use the CLI to scaffold a new Fhenix-enabled module:
+
+```bash
+modl module:new MyPrivateWhitelist -t fhenix-credentials
+```
+
+### EigenLayer Integration
+
+MODL provides modules that integrate with [EigenLayer](https://www.eigenlayer.xyz/) Actively Validated Services (AVS) and oracles:
+
+- **`EigenOracleModule`**: Lightweight helper to consume EigenLayer-backed oracles with built-in freshness checks. Reverts if data is stale beyond a configurable threshold.
+- **`EigenDynamicFeeModule`**: Dynamic-fee calculator that pulls a volatility index from an EigenLayer oracle and adjusts LP fees within configurable bounds.
+- **`EigenTaskModule`**: Base helper for modules that dispatch async work to an EigenLayer AVS. Manages task posting, context persistence, and result callbacks.
+
+Use the CLI to scaffold a new EigenLayer-powered module:
+
+```bash
+modl module:new MyVolatilityFee -t eigen-oracle
+```
+
 ### Usage
 
 1. **Install dependencies and compile**
@@ -80,9 +108,18 @@ src/
   modules/
     DynamicFeeModule.sol
     WhitelistModule.sol
+    fhenix/
+      FhenixAsyncModule.sol     # Async FHE computation base
+      FhenixCredentialsModule.sol
+      FhenixWhitelistModule.sol # Privacy-preserving whitelist
+    eigen/
+      EigenOracleModule.sol     # Oracle consumer with freshness checks
+      EigenDynamicFeeModule.sol # Volatility-based dynamic fees
+      EigenTaskModule.sol       # AVS task dispatch base
 test/
   MODLAggregator.t.sol          # Aggregator integration tests
   modules/
     DynamicFeeModule.t.sol
     WhitelistModule.t.sol
+    FhenixWhitelistModule.t.sol
 ```
